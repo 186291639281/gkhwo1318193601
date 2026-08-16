@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Earning Math Game</title>
+  <link rel="stylesheet" href="login.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Earning Math Game</h1>
+
+    <section class="stats">
+      <div class="stat"><strong>Earnings:</strong> $<span id="earnings">0.00</span></div>
+      <div class="stat"><strong>Coins:</strong> <span id="coins">0</span></div>
+      <div class="stat"><strong>Streak:</strong> <span id="streak">0</span></div>
+      <div class="stat"><strong>Accuracy:</strong> <span id="accuracy">0%</span></div>
+    </section>
+
+    <section class="game">
+      <div id="problem" class="problem">—</div>
+
+      <div class="controls">
+        <input id="answer" type="text" inputmode="numeric" autocomplete="off" placeholder="Type your answer" />
+        <button id="submit">Submit</button>
+        <button id="skip">Skip</button>
+      </div>
+
+      <div id="feedback" class="feedback"></div>
+
+      <div class="options">
+        <label>
+          Difficulty:
+          <select id="difficulty">
+            <option value="1">Easy</option>
+            <option value="2" selected>Normal</option>
+            <option value="3">Hard</option>
+          </select>
+        </label>
+        <div>
+          <button id="reset">Reset Progress</button>
+          <button id="signout" style="background:#9aa7b7;margin-left:8px;">Sign out</button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <small>Problems: addition, subtraction, multiplication, division (integer quotients). Earn $0.10 per correct answer; streak bonus applied.</small>
+    </footer>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
