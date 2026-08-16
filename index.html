@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AnimeGold - Login</title>
+  <style>
+    body { background:#111; color:#fff; text-align:center; font-family:Arial; }
+    .section { margin:20px; padding:20px; border-radius:10px; background:#222; }
+    button { margin:10px; padding:10px 20px; background:#ff9800; border:none; border-radius:5px; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div class="section">
+    <h1>Welcome to AnimeGold</h1>
+    <p>Sign in with your Gmail account</p>
+    <button onclick="loginWithGoogle()">Login with Gmail</button>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyB6qQybRVw4nlwGA-Kp8d6kCqOhdqo11Aw",
+      authDomain: "animegold-bf2a7.firebaseapp.com",
+      projectId: "animegold-bf2a7",
+      storageBucket: "animegold-bf2a7.firebasestorage.app",
+      messagingSenderId: "1055086176557",
+      appId: "1:1055086176557:web:aca8f68412e95ef369cba4",
+      measurementId: "G-J9LX9WMPJK"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+
+    // Function to get device info
+    function getDeviceInfo() {
+      const ua = navigator.userAgent;
+      let browserName = "Unknown";
+      let osName = "Unknown";
+      let deviceType = "Desktop";
+
+      // Detect OS
+      if (ua.indexOf("Win") > -1) osName = "Windows";
+      else if (ua.indexOf("Mac") > -1) osName = "MacOS";
+      else if (ua.indexOf("Linux") > -1) osName = "Linux";
+      else if (ua.indexOf("Android") > -1) osName = "Android";
+      else if (ua.indexOf("iPhone") > -1 || ua.indexOf("iPad") > -1) osName = "iOS";
+
+      // Detect Device Type
+      if (ua.indexOf("Mobile") > -1 || ua.indexOf("Android") > -1) deviceType = "Mobile";
+      else if (ua.indexOf("iPad") > -1) deviceType = "Tablet";
+
+      // Detect Browser
+      if (ua.indexOf("Chrome") > -1 && ua.indexOf("Chromium") === -1) browserName = "Chrome";
+      else if (ua.indexOf("Safari") > -1 && ua.indexOf("Chrome") === -1) browserName = "Safari";
+      else if (ua.indexOf("Firefox") > -1) browserName = "Firefox";
+      else if (ua.indexOf("Edge") > -1) browserName = "Edge";
+      else if (ua.indexOf("Opera") > -1 || ua.indexOf("OPR") > -1) browserName = "Opera";
+
+      return {
+        browser: browserName,
+        os: osName,
+        deviceType: deviceType,
+        userAgent: ua
+      };
+    }
+
+    // Function to get IP address
+    async function getIPAddress() {
+      try {
+        const response = await fetch("https://api.ipify.org?format=json");
+        const data = await response.json();
+        return data.ip;
+      } catch (err) {
+        console.error("Error fetching IP:", err);
+        return "Unknown";
+      }
+    }
+
+    window.loginWithGoogle = async () => {
+      try {
+        const result = await signInWithPopup(auth, provider);
+        const user = result.user;
+
+        // Get device info and IP
+        const deviceInfo = getDeviceInfo();
+        const ipAddress = await getIPAddress();
+
+        // Get user reference
+        const userRef = doc(db, "users", user.uid);
+        const userSnap = await getDoc(userRef);
+        const userData = userSnap.exists() ? userSnap.data() : {};
+
+        // Update user data with device and IP info
+        await setDoc(userRef, {
+          ...userData,
+          email: user.email,
+          lastLogin: new Date().toISOString(),
+          lastIP: ipAddress,
+          lastDevice: {
+            browser: deviceInfo.browser,
+            os: deviceInfo.os,
+            deviceType: deviceInfo.deviceType
+          },
+          loginHistory: [
+            ...(userData.loginHistory || []),
+            {
+              ip: ipAddress,
+              device: deviceInfo.browser,
+              os: deviceInfo.os,
+              deviceType: deviceInfo.deviceType,
+              timestamp: new Date().toISOString()
+            }
+          ]
+        }, { merge: true });
+
+        alert("Login successful!");
+        window.location.href = "setupname.html";
+      } catch (err) {
+        alert("Error: " + err.message);
+      }
+    };
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        window.location.href = "earn.html";
+      }
+    });
+  </script>
+</body>
+</html>
