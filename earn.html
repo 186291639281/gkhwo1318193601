@@ -17,8 +17,8 @@
     /* Spin the Wheel Styles */
     .wheel-container { position:relative; width:300px; height:300px; margin:20px auto; }
     .wheel { width:100%; height:100%; border-radius:50%; position:relative; overflow:hidden; box-shadow:0 0 20px rgba(255, 152, 0, 0.5); }
-    .wheel-segment { position:absolute; width:100%; height:100%; clip-path:polygon(50% 50%, 50% 0%, 100% 0%); transform-origin:50% 50%; display:flex; align-items:center; justify-content:center; fo[...]
-    .pointer { position:absolute; top:-15px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:15px solid transparent; border-right:15px solid transparent; border-top:20px solid[...]
+    .wheel-segment { position:absolute; width:100%; height:100%; clip-path:polygon(50% 50%, 50% 0%, 100% 0%); transform-origin:50% 50%; display:flex; align-items:center; justify-content:center; font-weight:bold; color:#fff; }
+    .pointer { position:absolute; top:-15px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:15px solid transparent; border-right:15px solid transparent; border-top:20px solid #fff; }
     .spin-button { background:#27ae60; border:none; padding:12px 30px; border-radius:5px; cursor:pointer; font-size:16px; font-weight:bold; color:#fff; margin:10px; }
     .spin-button:disabled { background:#95a5a6; cursor:not-allowed; }
     .spin-result { background:#333; padding:15px; border-radius:8px; margin:20px auto; width:fit-content; font-size:18px; font-weight:bold; }
@@ -31,7 +31,15 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
     import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
-    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      setDoc,
+      updateDoc,
+      increment,
+      serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
 
     // For Firebase JS SDK v7.20.0 and later, measurementId is optional
     const firebaseConfig = {
@@ -51,7 +59,7 @@
     let userRef, userData = {}, minuteCounter = 0, watching = false, updateInterval;
     let isSpinning = false;
 
-    // Wheel configuration - prizes in points (1 point = 1 peso)
+    // Wheel configuration - prizes in points (1 point = 1 minute)
     const wheelPrizes = [
       { points: 0.20, chance: 90.9869, color: '#e74c3c' },
       { points: 0.25, chance: 34.9131, color: '#3498db' },
@@ -94,7 +102,7 @@
     }
 
     window.spinWheel = async () => {
-      const pts = minuteCounter / 300;
+      const pts = minuteCounter;
       
       if (pts < 1) {
         alert("You need at least 1 point to spin!");
@@ -110,9 +118,12 @@
       document.getElementById('spinBtn').disabled = true;
 
       try {
-        // Deduct 1 point (300 minutes)
-        minuteCounter -= 300;
-        await setDoc(userRef, { minuteCounter }, { merge: true });
+        // Deduct 1 point (1 minute)
+        minuteCounter -= 1;
+        // Optimistic UI update
+        updateUI();
+        // Atomic server decrement
+        await updateDoc(userRef, { minuteCounter: increment(-1), lastActivityTime: serverTimestamp() });
 
         // Spin animation
         const wheel = document.getElementById('wheel');
@@ -130,12 +141,11 @@
         const winningIndex = Math.floor((360 - (extraDegrees % 360)) / (360 / wheelPrizes.length)) % wheelPrizes.length;
         const prize = wheelPrizes[winningIndex];
 
-        // Add winnings directly to minuteCounter as points
-        // Convert points to minutes: points * 300 = minutes
-        const pointsToAdd = prize.points * 300;
+        // Add winnings directly to minuteCounter as points (allow fractional)
+        const pointsToAdd = prize.points;
         minuteCounter += pointsToAdd;
-
-        await setDoc(userRef, { minuteCounter }, { merge: true });
+        // Atomic server increment for prize (supports fractional)
+        await updateDoc(userRef, { minuteCounter: increment(pointsToAdd) });
 
         // Show result
         document.getElementById('resultText').innerText = `🎉 You Won: ${prize.points} points!`;
@@ -144,6 +154,7 @@
         updateUI();
       } catch (err) {
         alert("Error during spin: " + err.message);
+        console.error('spin error', err);
       } finally {
         isSpinning = false;
         document.getElementById('spinBtn').disabled = false;
@@ -190,7 +201,7 @@
       watching = true;
 
       // Set user status to ACTIVE
-      await setDoc(userRef, { activityStatus: "active", lastActivityTime: new Date().toISOString() }, { merge: true });
+      await updateDoc(userRef, { activityStatus: "active", lastActivityTime: serverTimestamp() }, { merge: true });
 
       // Update status badge
       document.getElementById("statusBadge").textContent = "🟢 ACTIVE";
@@ -198,11 +209,21 @@
 
       // Start counting minutes after clicking Load
       if (updateInterval) clearInterval(updateInterval);
+      // Immediately increment local counter and server once to avoid waiting 60s for first credit
+      minuteCounter += 0; // no immediate credit, first credit after 60s
+      updateUI();
+
       updateInterval = setInterval(async () => {
-        if (watching) {
-          minuteCounter++;
-          await setDoc(userRef, { minuteCounter, lastActivityTime: new Date().toISOString() }, { merge: true });
-          updateUI();
+        if (watching && userRef) {
+          try {
+            minuteCounter += 1; // optimistic local update for UI responsiveness
+            updateUI();
+            // atomic server increment
+            await updateDoc(userRef, { minuteCounter: increment(1), lastActivityTime: serverTimestamp() });
+            console.log('Incremented minuteCounter on server by 1');
+          } catch (err) {
+            console.error('Failed updating minuteCounter:', err);
+          }
         }
       }, 60000);
     };
@@ -212,7 +233,7 @@
       if (updateInterval) clearInterval(updateInterval);
 
       // Set user status to INACTIVE
-      await setDoc(userRef, { activityStatus: "inactive" }, { merge: true });
+      await updateDoc(userRef, { activityStatus: "inactive" }, { merge: true });
 
       // Update status badge
       document.getElementById("statusBadge").textContent = "⚫ INACTIVE";
@@ -223,10 +244,14 @@
     };
 
     async function updateUI() {
-      const snap = await getDoc(userRef);
-      if (snap.exists()) userData = snap.data();
+      try {
+        const snap = await getDoc(userRef);
+        if (snap.exists()) userData = snap.data();
+      } catch (err) {
+        console.error('Error fetching user doc for UI update', err);
+      }
       
-      const pointsEarned = (minuteCounter / 300).toFixed(4);
+      const pointsEarned = (minuteCounter).toFixed(4);
       document.getElementById("points").innerText =
         pointsEarned + " points";
       document.getElementById("pending").innerText =
@@ -246,7 +271,7 @@
     }
 
     window.claimReward = async (cost) => {
-      const pts = minuteCounter / 300;
+      const pts = minuteCounter;
       const snap = await getDoc(userRef);
       let data = {};
       if (snap.exists()) data = snap.data();
@@ -258,8 +283,9 @@
 
       if (pts >= cost) {
         const newPending = (data.pendingEarnings || 0) + cost;
-        minuteCounter -= cost * 300;
-        await setDoc(userRef, { minuteCounter, pendingEarnings: newPending }, { merge: true });
+        minuteCounter -= cost;
+        // Atomic server update: decrement minutes and increment pendingEarnings
+        await updateDoc(userRef, { minuteCounter: increment(-cost), pendingEarnings: newPending }, { merge: true });
         alert("₱" + cost + " added to Pending Earnings for " +
               data.userName + " via " + data.payoutMethod + "!");
         updateUI();
@@ -271,9 +297,20 @@
     window.logout = () => signOut(auth).then(async () => {
       // Set status to inactive before logout
       if (userRef) {
-        await setDoc(userRef, { activityStatus: "inactive" }, { merge: true });
+        await updateDoc(userRef, { activityStatus: "inactive" }, { merge: true });
       }
       window.location.href = "index.html";
+    });
+
+    // Optional: flush on page hide (no buffering here, but good to ensure status saved)
+    window.addEventListener('pagehide', async () => {
+      try {
+        if (watching && userRef) {
+          await updateDoc(userRef, { lastActivityTime: serverTimestamp(), activityStatus: "inactive" }, { merge: true });
+        }
+      } catch (err) {
+        console.error('Error on pagehide flush', err);
+      }
     });
   </script>
 </head>
