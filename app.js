@@ -103,18 +103,25 @@ function generateProblem(difficultyLevel) {
   return generateHardProblem();
 }
 
+// Validate a problem object loaded from server or memory
+function isValidProblem(p) {
+  return p && typeof p.a === 'number' && typeof p.b === 'number' && (typeof p.answer !== 'undefined') && typeof p.op === 'string';
+}
+
 function updateUI(){
   el.earnings.textContent = state.earnings.toFixed(2);
   el.coins.textContent = state.coins;
   el.streak.textContent = state.streak;
   const acc = state.total === 0 ? 0 : Math.round((state.correct/state.total)*100);
   el.accuracy.textContent = acc + '%';
-  if (state.current) {
-    const {a,b,op} = state.current;
-    el.problem.textContent = `${a} ${op} ${b} = ?`;
-  } else {
-    el.problem.textContent = '—';
+  if (!isValidProblem(state.current)) {
+    // If invalid, generate a new one and return (nextProblem updates UI and saves)
+    console.info('State.current invalid or missing — generating a new problem');
+    nextProblem();
+    return;
   }
+  const {a,b,op} = state.current;
+  el.problem.textContent = `${a} ${op} ${b} = ?`;
 }
 
 function saveStateDebounced(){
@@ -162,14 +169,15 @@ function loadDefaultsFromServer(docData){
 
 function nextProblem(){
   state.current = generateProblem(state.difficulty || 1);
-  el.answer.value = '';
-  el.feedback.textContent = '';
+  if (el.answer) el.answer.value = '';
+  if (el.feedback) el.feedback.textContent = '';
   updateUI();
   saveStateDebounced();
-  el.answer.focus();
+  if (el.answer) el.answer.focus();
 }
 
 function showFeedback(msg, cls, timeout=900){
+  if (!el.feedback) return;
   el.feedback.textContent = msg;
   el.feedback.className = 'feedback ' + (cls==='success' ? 'success' : cls==='error' ? 'error' : '');
   if (timeout) setTimeout(()=>{ el.feedback.textContent = ''; el.feedback.className = 'feedback'; }, timeout);
@@ -196,11 +204,12 @@ function applyIncorrect(correctAnswer){
 }
 
 function submitAnswer(){
-  const raw = el.answer.value.trim();
+  const raw = (el.answer && el.answer.value) ? el.answer.value.trim() : '';
   if (raw === '') { showFeedback('Enter an answer or click Skip','error',900); return; }
   const numeric = Number(raw);
   if (Number.isNaN(numeric)) { showFeedback('Please enter a valid number','error',900); return; }
-  const correct = state.current.answer;
+  const correct = state.current && state.current.answer;
+  if (typeof correct === 'undefined') { showFeedback('No active problem — generating one','error',900); nextProblem(); return; }
   if (Math.abs(numeric - correct) < 1e-9) applyCorrect(); else applyIncorrect(correct);
   updateUI();
   saveStateDebounced();
@@ -208,19 +217,21 @@ function submitAnswer(){
 }
 
 // Event wiring
-el.submit.addEventListener('click', submitAnswer);
-el.answer.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') submitAnswer(); });
-el.skip.addEventListener('click', ()=>{ state.total++; state.streak=0; showFeedback(`Skipped — correct was ${state.current.answer}`,'',700); saveStateDebounced(); setTimeout(nextProblem,700); });
-el.reset.addEventListener('click', async ()=> {
-  if (!confirm('Reset earnings, coins, and progress?')) return;
-  state = { earnings:0, coins:0, correct:0, total:0, streak:0, current:null, difficulty: state.difficulty || 1 };
-  updateUI();
-  // persist reset immediately
-  if (loadedFromServer) await saveStateToFirestore();
-  nextProblem();
-});
-el.difficulty.addEventListener('change', (e)=> { state.difficulty = Number(e.target.value); saveStateDebounced(); nextProblem(); });
-el.signout.addEventListener('click', async ()=> { await signOut(); window.location.href = 'index.html'; });
+if (el.submit) el.submit.addEventListener('click', submitAnswer);
+if (el.answer) el.answer.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') submitAnswer(); });
+if (el.skip) el.skip.addEventListener('click', ()=>{ state.total++; state.streak=0; showFeedback(`Skipped — correct was ${state.current?state.current.answer:'unknown'}`,'',700); saveStateDebounced(); setTimeout(nextProblem,700); });
+if (el.reset) {
+  el.reset.addEventListener('click', async ()=> {
+    if (!confirm('Reset earnings, coins, and progress?')) return;
+    state = { earnings:0, coins:0, correct:0, total:0, streak:0, current:null, difficulty: state.difficulty || 1 };
+    updateUI();
+    // persist reset immediately
+    if (loadedFromServer) await saveStateToFirestore();
+    nextProblem();
+  });
+}
+if (el.difficulty) el.difficulty.addEventListener('change', (e)=> { state.difficulty = Number(e.target.value); saveStateDebounced(); nextProblem(); });
+if (el.signout) el.signout.addEventListener('click', async ()=> { await signOut(); window.location.href = 'index.html'; });
 
 // Auth gating and initial load
 onAuthChange(async (user) => {
@@ -255,6 +266,11 @@ onAuthChange(async (user) => {
   // Ensure difficulty select reflects loaded state
   if (el.difficulty) el.difficulty.value = String(state.difficulty || 1);
 
-  // if no current problem, generate one
-  if (!state.current) nextProblem(); else updateUI();
+  // if no valid current problem, generate one
+  if (!isValidProblem(state.current)) {
+    console.info('No valid current problem after load — generating new one');
+    nextProblem();
+  } else {
+    updateUI();
+  }
 });
