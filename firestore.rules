@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // User game state: only the signed-in user may read/create/update their document.
+    // Updates are constrained so totals may only increase and single-update increases are capped.
+    match /users/{userId} {
+      allow read, create: if request.auth != null && request.auth.uid == userId;
+
+      allow update: if request.auth != null
+                    && request.auth.uid == userId
+                    // require that both existing and new docs include a gameState map
+                    && resource.data.gameState is map
+                    && request.resource.data.gameState is map
+                    // earnings and coins may only increase (prevents clients from lowering totals)
+                    && (request.resource.data.gameState.earnings >= resource.data.gameState.earnings)
+                    && (request.resource.data.gameState.coins >= resource.data.gameState.coins)
+                    // cap single-update increases to reasonable values to reduce abuse
+                    // Adjust caps to values appropriate for your app
+                    && ((request.resource.data.gameState.earnings - resource.data.gameState.earnings) <= 10.0)
+                    && ((request.resource.data.gameState.coins - resource.data.gameState.coins) <= 50);
+
+      // Prevent client deletes of user documents through client SDKs
+      allow delete: if false;
+    }
+
+    // Earnings events: allow creation of events where event.uid equals the authenticated uid.
+    // Allow clients to create with client-provided IDs for idempotency; disallow updates/deletes.
+    match /earningsEvents/{eventId} {
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.uid
+                    // createdAt should be provided by the client or set server-side; if provided, ensure it's a number
+                    && (request.resource.data.createdAt == null || request.resource.data.createdAt is number);
+
+      // Allow owners to read their own event entries
+      allow read: if request.auth != null && request.auth.uid == resource.data.uid;
+
+      // Disallow client updates and deletes — events are append-only
+      allow update, delete: if false;
+    }
+  }
+}
