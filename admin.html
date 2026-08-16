@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AnimeGold Admin</title>
+  <style>
+    body { background:#111; color:#fff; font-family:Arial; text-align:center; }
+    .section { margin:20px; padding:20px; border-radius:10px; background:#222; }
+    button { margin:5px; padding:8px 12px; background:#ff9800; border:none; border-radius:5px; cursor:pointer; }
+    button.ban-btn { background:#c0392b; }
+    button.edit-btn { background:#3498db; padding:6px 10px; font-size:12px; }
+    button.points-btn { background:#27ae60; }
+    ul { list-style:none; padding:0; }
+    li { background:#333; margin:10px 0; padding:15px; border-radius:5px; text-align:left; }
+    input[type="number"] { padding:5px; border-radius:5px; width:80px; }
+    input[type="text"] { padding:5px; border-radius:5px; }
+    .user-controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .earnings-row { display:flex; gap:10px; align-items:center; margin:5px 0; }
+    .device-info { background:#222; padding:10px; border-radius:5px; margin:8px 0; font-size:12px; }
+    .device-info strong { color:#ff9800; }
+    .status-badge { display:inline-block; padding:8px 12px; border-radius:5px; font-weight:bold; margin:5px 0; font-size:14px; }
+    .status-active { background:#27ae60; }
+    .status-inactive { background:#95a5a6; }
+    .status-banned { background:#c0392b; }
+    .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); justify-content:center; align-items:center; z-index:999; }
+    .modal-content { background:#333; padding:30px; border-radius:10px; text-align:center; width:300px; }
+    .modal-content h2 { margin-top:0; }
+    .modal-content button { margin:10px 5px; padding:10px 20px; }
+    .modal-content input { width:100%; padding:10px; margin:10px 0; border-radius:5px; border:none; box-sizing:border-box; }
+    .modal-content select { width:100%; padding:10px; margin:10px 0; border-radius:5px; border:none; }
+    .name-row { display:flex; gap:10px; align-items:center; margin:5px 0; }
+  </style>
+  <script type="module">
+    // ✅ Use consistent Firebase v12.17.1 across all pages
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+    import { getFirestore, collection, getDocs, updateDoc, doc, getDoc } 
+      from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
+    import { getAuth, onAuthStateChanged, signOut
+    } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
+
+    // ✅ Your Firebase config (must match exactly)
+    const firebaseConfig = {
+      apiKey: "AIzaSyB6qQybRVw4nlwGA-Kp8d6kCqOhdqo11Aw",
+      authDomain: "animegold-bf2a7.firebaseapp.com",
+      projectId: "animegold-bf2a7",
+      storageBucket: "animegold-bf2a7.firebasestorage.app",
+      messagingSenderId: "1055086176557",
+      appId: "1:1055086176557:web:aca8f68412e95ef369cba4",
+      measurementId: "G-J9LX9WMPJK"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+    let allUsers = [];
+
+    async function loadUsers() {
+      try {
+        const snap = await getDocs(collection(db, "users"));
+        allUsers = [];
+        console.log("Fetched users:", snap.size);
+
+        let html = `<h2>Total Registered Users: ${snap.size}</h2><ul>`;
+        snap.forEach(docSnap => {
+          allUsers.push({ id: docSnap.id, data: docSnap.data() });
+          const data = docSnap.data();
+          const pointsEarned = ((data.minuteCounter || 0) / 300).toFixed(4);
+          
+          // Determine status and badge color
+          let statusBadge = "";
+          if (data.banned === true) {
+            statusBadge = '<div class="status-badge status-banned">🚫 BANNED</div>';
+          } else {
+            const activityStatus = data.activityStatus || "inactive";
+            if (activityStatus === "active") {
+              statusBadge = '<div class="status-badge status-active">🟢 ACTIVE</div>';
+            } else {
+              statusBadge = '<div class="status-badge status-inactive">⚫ INACTIVE</div>';
+            }
+          }
+          
+          // Format device and IP info
+          let deviceHTML = "";
+          if (data.lastIP || data.lastDevice) {
+            deviceHTML = `
+              <div class="device-info">
+                <strong>Last Login:</strong> ${data.lastLogin || "N/A"}<br>
+                <strong>IP Address:</strong> ${data.lastIP || "N/A"}<br>
+                <strong>Browser:</strong> ${data.lastDevice?.browser || "N/A"}<br>
+                <strong>OS:</strong> ${data.lastDevice?.os || "N/A"}<br>
+                <strong>Device Type:</strong> ${data.lastDevice?.deviceType || "N/A"}
+              </div>
+            `;
+          }
+
+          html += `<li>
+            <strong>UID:</strong> ${docSnap.id}<br>
+            <div class="name-row">
+              <strong>Name:</strong> <input type="text" id="name-${docSnap.id}" value="${data.userName || "Not set"}" style="flex:1;">
+              <button class="edit-btn" onclick="editName('${docSnap.id}')">Edit</button>
+            </div>
+            <strong>Email:</strong> ${data.email || "Not set"}<br>
+            <strong>Payout Method:</strong> ${data.payoutMethod || "Not set"}<br>
+            <strong>Payout Name:</strong> ${data.payoutName || "Not set"}<br>
+            ${statusBadge}
+            ${deviceHTML}
+            <div class="earnings-row">
+              <strong>Points Earned:</strong> <input type="number" id="points-${docSnap.id}" value="${pointsEarned}" min="0" step="0.0001">
+              <button class="edit-btn" onclick="editPoints('${docSnap.id}')">Edit</button>
+            </div>
+            <div class="earnings-row">
+              <strong>Pending Earnings:</strong> ₱<input type="number" id="pending-${docSnap.id}" value="${data.pendingEarnings || 0}" min="0">
+              <button class="edit-btn" onclick="editPendingEarnings('${docSnap.id}')">Edit</button>
+            </div>
+            <div class="earnings-row">
+              <strong>Total Earnings:</strong> ₱<input type="number" id="total-${docSnap.id}" value="${data.totalEarnings || 0}" min="0">
+              <button class="edit-btn" onclick="editTotalEarnings('${docSnap.id}')">Edit</button>
+            </div>
+            <div class="user-controls">
+              <button class="ban-btn" onclick="banUser('${docSnap.id}')">Ban</button>
+              <button onclick="unbanUser('${docSnap.id}')">Unban</button>
+            </div>
+          </li>`;
+        });
+        html += "</ul>";
+        document.getElementById("users").innerHTML = html;
+      } catch (err) {
+        console.error("Error loading users:", err);
+        document.getElementById("users").innerHTML = `<p style="color:red;">Error connecting to Firebase: ${err.message}</p>`;
+      }
+    }
+
+    window.editName = async function(uid) {
+      const name = document.getElementById(`name-${uid}`).value;
+      
+      if (!name || name.trim() === "") {
+        alert("Please enter a valid name!");
+        return;
+      }
+
+      try {
+        await updateDoc(doc(db, "users", uid), { userName: name });
+        alert(`✅ Name updated to ${name}!`);
+        loadUsers();
+      } catch (err) {
+        alert("Error updating name: " + err.message);
+      }
+    };
+
+    window.editPoints = async function(uid) {
+      const points = parseFloat(document.getElementById(`points-${uid}`).value);
+      
+      if (isNaN(points) || points < 0) {
+        alert("Please enter a valid amount!");
+        return;
+      }
+
+      try {
+        // Convert points back to minutes (1 point = 300 minutes)
+        const minutes = points * 300;
+        await updateDoc(doc(db, "users", uid), { minuteCounter: minutes });
+        alert(`✅ Points updated to ${points}!`);
+        loadUsers();
+      } catch (err) {
+        alert("Error updating points: " + err.message);
+      }
+    };
+
+    window.editPendingEarnings = async function(uid) {
+      const value = parseInt(document.getElementById(`pending-${uid}`).value);
+      
+      if (isNaN(value) || value < 0) {
+        alert("Please enter a valid amount!");
+        return;
+      }
+
+      try {
+        await updateDoc(doc(db, "users", uid), { pendingEarnings: value });
+        alert(`✅ Pending earnings updated to ₱${value}!`);
+        loadUsers();
+      } catch (err) {
+        alert("Error updating pending earnings: " + err.message);
+      }
+    };
+
+    window.editTotalEarnings = async function(uid) {
+      const value = parseInt(document.getElementById(`total-${uid}`).value);
+      
+      if (isNaN(value) || value < 0) {
+        alert("Please enter a valid amount!");
+        return;
+      }
+
+      try {
+        await updateDoc(doc(db, "users", uid), { totalEarnings: value });
+        alert(`✅ Total earnings updated to ₱${value}!`);
+        loadUsers();
+      } catch (err) {
+        alert("Error updating total earnings: " + err.message);
+      }
+    };
+
+    window.banUser = async function(uid) {
+      try {
+        await updateDoc(doc(db, "users", uid), { banned: true });
+        alert("User banned successfully!");
+        loadUsers();
+      } catch (err) {
+        alert("Error banning user: " + err.message);
+      }
+    };
+
+    window.unbanUser = async function(uid) {
+      try {
+        await updateDoc(doc(db, "users", uid), { banned: false });
+        alert("User unbanned successfully!");
+        loadUsers();
+      } catch (err) {
+        alert("Error unbanning user: " + err.message);
+      }
+    };
+
+    window.openAddPointsModal = function() {
+      document.getElementById("addPointsModal").style.display = "flex";
+    };
+
+    window.closeAddPointsModal = function() {
+      document.getElementById("addPointsModal").style.display = "none";
+    };
+
+    window.chooseAddPointsOption = function(option) {
+      if (option === "all") {
+        const points = prompt("Enter points to give to all users:");
+        if (points === null || isNaN(points) || points <= 0) {
+          alert("Invalid input!");
+          return;
+        }
+        addPointsToAll(parseInt(points));
+      } else {
+        document.getElementById("addPointsModal").style.display = "none";
+        document.getElementById("chooseUserModal").style.display = "flex";
+        populateUserSelect();
+      }
+    };
+
+    function populateUserSelect() {
+      let html = '<option value="">Select a user...</option>';
+      allUsers.forEach(user => {
+        html += `<option value="${user.id}">${user.data.userName || user.data.email || user.id}</option>`;
+      });
+      document.getElementById("userSelect").innerHTML = html;
+    }
+
+    window.addPointsToSelectedUser = async function() {
+      const uid = document.getElementById("userSelect").value;
+      const points = parseInt(document.getElementById("pointsInput").value);
+
+      if (!uid) {
+        alert("Please select a user!");
+        return;
+      }
+
+      if (isNaN(points) || points <= 0) {
+        alert("Please enter a valid amount of points!");
+        return;
+      }
+
+      try {
+        const userRef = doc(db, "users", uid);
+        const snap = await getDoc(userRef);
+        const userData = snap.exists() ? snap.data() : {};
+        const minutes = (userData.minuteCounter || 0) + (points * 300);
+        
+        await updateDoc(userRef, { minuteCounter: minutes });
+        alert(`✅ Added ${points} points to user!`);
+        document.getElementById("chooseUserModal").style.display = "none";
+        document.getElementById("userSelect").value = "";
+        document.getElementById("pointsInput").value = "";
+        loadUsers();
+      } catch (err) {
+        alert("Error adding points: " + err.message);
+      }
+    };
+
+    async function addPointsToAll(points) {
+      try {
+        let count = 0;
+        for (const user of allUsers) {
+          const userRef = doc(db, "users", user.id);
+          const minutes = (user.data.minuteCounter || 0) + (points * 300);
+          await updateDoc(userRef, { minuteCounter: minutes });
+          count++;
+        }
+        alert(`✅ Added ${points} points to ${count} users!`);
+        loadUsers();
+      } catch (err) {
+        alert("Error adding points: " + err.message);
+      }
+    }
+
+    window.closeChooseUserModal = function() {
+      document.getElementById("chooseUserModal").style.display = "none";
+    };
+
+    window.logout = () => signOut(auth).then(() => window.location.href = "index.html");
+
+    onAuthStateChanged(auth, (user) => {
+      // 🔒 Restrict to admin email
+      if (!user || user.email !== "shadowtrimz@gmail.com") {
+        document.getElementById("users").innerHTML = "<p style='color:red;'>Access Denied. Admin only.</p>";
+        setTimeout(() => window.location.href = "index.html", 2000);
+      } else {
+        document.getElementById("users").style.display = "block";
+        loadUsers();
+      }
+    });
+  </script>
+</head>
+<body style="background:#111; color:#fff; font-family:Arial; text-align:center;">
+  <div class="section">
+    <h1>Admin Dashboard</h1>
+    <button class="points-btn" onclick="openAddPointsModal()">Add Points</button>
+    <button onclick="logout()">Logout</button>
+  </div>
+  <div class="section">
+    <div id="users" style="display:none;">Loading...</div>
+  </div>
+
+  <!-- Add Points Modal -->
+  <div id="addPointsModal" class="modal">
+    <div class="modal-content">
+      <h2>Add Points</h2>
+      <button onclick="chooseAddPointsOption('all')" style="background:#27ae60; width:100%;">All Users</button>
+      <button onclick="chooseAddPointsOption('choose')" style="background:#3498db; width:100%;">Choose User</button>
+      <button onclick="closeAddPointsModal()" style="background:#e74c3c; width:100%;">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Choose User Modal -->
+  <div id="chooseUserModal" class="modal">
+    <div class="modal-content">
+      <h2>Add Points to User</h2>
+      <select id="userSelect"></select>
+      <input type="number" id="pointsInput" placeholder="Enter points" min="1">
+      <button onclick="addPointsToSelectedUser()" style="background:#27ae60; width:100%;">Add</button>
+      <button onclick="closeChooseUserModal()" style="background:#e74c3c; width:100%;">Cancel</button>
+    </div>
+  </div>
+</body>
+</html>
