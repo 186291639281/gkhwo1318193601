@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Setup Name - AnimeGold</title>
+  <style>
+    body { background:#111; color:#fff; text-align:center; font-family:Arial; }
+    .section { margin:20px; padding:20px; border-radius:10px; background:#222; }
+    input { margin:10px; padding:8px; border-radius:5px; }
+    button { margin:10px; padding:10px 20px; background:#ff9800; border:none; border-radius:5px; cursor:pointer; display:none; }
+  </style>
+</head>
+<body>
+  <div class="section">
+    <h2>Set Your AnimeGold Name</h2>
+    <input id="userName" placeholder="Enter your name"><br>
+    <button id="confirmBtn">Confirm</button>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+    import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyB6qQybRVw4nlwGA-Kp8d6kCqOhdqo11Aw",
+      authDomain: "animegold-bf2a7.firebaseapp.com",
+      projectId: "animegold-bf2a7",
+      storageBucket: "animegold-bf2a7.firebasestorage.app",
+      messagingSenderId: "1055086176557",
+      appId: "1:1055086176557:web:aca8f68412e95ef369cba4",
+      measurementId: "G-J9LX9WMPJK"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    let userRef;
+
+    onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        userRef = doc(db, "users", u.uid);
+        const snap = await getDoc(userRef);
+
+        if (snap.exists() && snap.data().userName) {
+          // ✅ Name already set → skip setup
+          window.location.href = "earn.html";
+        } else {
+          // ❌ No name yet → show input + button
+          document.getElementById("confirmBtn").style.display = "inline-block";
+          document.getElementById("confirmBtn").onclick = async () => {
+            const name = document.getElementById("userName").value.trim();
+            if (!name) {
+              alert("Please enter a name!");
+              return;
+            }
+            try {
+              // ✅ Save both name + Gmail email
+              await setDoc(userRef, { 
+                userName: name,
+                email: u.email,                // auto‑save Gmail
+                createdAt: new Date().toISOString()
+              }, { merge: true });
+
+              alert("Name and email saved!");
+              window.location.href = "earn.html";
+            } catch (e) {
+              alert("Error: " + e.message);
+            }
+          };
+        }
+      } else {
+        window.location.href = "index.html";
+      }
+    });
+  </script>
+</body>
+</html>
