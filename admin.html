@@ -63,7 +63,8 @@
         snap.forEach(docSnap => {
           allUsers.push({ id: docSnap.id, data: docSnap.data() });
           const data = docSnap.data();
-          const pointsEarned = ((data.minuteCounter || 0) / 300).toFixed(4);
+          // 1 point = 1 minute now
+          const pointsEarned = ((data.minuteCounter || 0)).toFixed(4);
           
           // Determine status and badge color
           let statusBadge = "";
@@ -155,8 +156,8 @@
       }
 
       try {
-        // Convert points back to minutes (1 point = 300 minutes)
-        const minutes = points * 300;
+        // Convert points back to minutes (1 point = 1 minute)
+        const minutes = points;
         await updateDoc(doc(db, "users", uid), { minuteCounter: minutes });
         alert(`✅ Points updated to ${points}!`);
         loadUsers();
@@ -192,7 +193,7 @@
 
       try {
         await updateDoc(doc(db, "users", uid), { totalEarnings: value });
-        alert(`✅ Total earnings updated to ₱${value}!`);
+        alert(`✅ Total earnings updated to ��${value}!`);
         loadUsers();
       } catch (err) {
         alert("Error updating total earnings: " + err.message);
@@ -268,7 +269,7 @@
         const userRef = doc(db, "users", uid);
         const snap = await getDoc(userRef);
         const userData = snap.exists() ? snap.data() : {};
-        const minutes = (userData.minuteCounter || 0) + (points * 300);
+        const minutes = (userData.minuteCounter || 0) + (points * 1);
         
         await updateDoc(userRef, { minuteCounter: minutes });
         alert(`✅ Added ${points} points to user!`);
@@ -286,7 +287,7 @@
         let count = 0;
         for (const user of allUsers) {
           const userRef = doc(db, "users", user.id);
-          const minutes = (user.data.minuteCounter || 0) + (points * 300);
+          const minutes = (user.data.minuteCounter || 0) + (points * 1);
           await updateDoc(userRef, { minuteCounter: minutes });
           count++;
         }
