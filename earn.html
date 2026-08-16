@@ -195,52 +195,24 @@
       }
     });
 
-    window.loadSeries = async () => {
-      document.getElementById("seriesFrame").src =
-        document.getElementById("seriesSelect").value;
-      watching = true;
+    // Open a confirmation popup and finalize claim on confirmation
+    window.openRewardPopup = function(cost) {
+      const popup = window.open(`confirm.html?reward=${cost}`,'rewardPopup','width=420,height=600,top=100,left=100');
 
-      // Set user status to ACTIVE
-      await updateDoc(userRef, { activityStatus: "active", lastActivityTime: serverTimestamp() }, { merge: true });
-
-      // Update status badge
-      document.getElementById("statusBadge").textContent = "🟢 ACTIVE";
-      document.getElementById("statusBadge").className = "status-badge status-active";
-
-      // Start counting minutes after clicking Load
-      if (updateInterval) clearInterval(updateInterval);
-      // Immediately increment local counter and server once to avoid waiting 60s for first credit
-      minuteCounter += 0; // no immediate credit, first credit after 60s
-      updateUI();
-
-      updateInterval = setInterval(async () => {
-        if (watching && userRef) {
-          try {
-            minuteCounter += 1; // optimistic local update for UI responsiveness
-            updateUI();
-            // atomic server increment
-            await updateDoc(userRef, { minuteCounter: increment(1), lastActivityTime: serverTimestamp() });
-            console.log('Incremented minuteCounter on server by 1');
-          } catch (err) {
-            console.error('Failed updating minuteCounter:', err);
-          }
+      function handler(e) {
+        try {
+          if (e.origin !== location.origin) return;
+        } catch (err) {
+          return;
         }
-      }, 60000);
-    };
+        if (e.data && e.data.status === 'confirmed' && Number(e.data.reward) === Number(cost)) {
+          // finalize claim
+          claimReward(cost);
+        }
+        window.removeEventListener('message', handler);
+      }
 
-    window.stopWatching = async () => {
-      watching = false;
-      if (updateInterval) clearInterval(updateInterval);
-
-      // Set user status to INACTIVE
-      await updateDoc(userRef, { activityStatus: "inactive" }, { merge: true });
-
-      // Update status badge
-      document.getElementById("statusBadge").textContent = "⚫ INACTIVE";
-      document.getElementById("statusBadge").className = "status-badge status-inactive";
-
-      document.getElementById("seriesFrame").src = "";
-      alert("Stopped watching. Status set to Inactive.");
+      window.addEventListener('message', handler);
     };
 
     async function updateUI() {
@@ -350,10 +322,10 @@
   <div class="section">
     <h2>Rewards</h2>
     <div class="eligibility">
-      <div class="card"><h3>Reward ₱100</h3><p>Cost: 100 points</p><button onclick="claimReward(100)">Claim</button></div>
-      <div class="card"><h3>Reward ₱200</h3><p>Cost: 200 points</p><button onclick="claimReward(200)">Claim</button></div>
-      <div class="card"><h3>Reward ₱500</h3><p>Cost: 500 points</p><button onclick="claimReward(500)">Claim</button></div>
-      <div class="card"><h3>Reward ₱1000</h3><p>Cost: 1000 points</p><button onclick="claimReward(1000)">Claim</button></div>
+      <div class="card"><h3>Reward ₱100</h3><p>Cost: 100 points</p><button onclick="openRewardPopup(100)">Claim</button></div>
+      <div class="card"><h3>Reward ₱200</h3><p>Cost: 200 points</p><button onclick="openRewardPopup(200)">Claim</button></div>
+      <div class="card"><h3>Reward ₱500</h3><p>Cost: 500 points</p><button onclick="openRewardPopup(500)">Claim</button></div>
+      <div class="card"><h3>Reward ₱1000</h3><p>Cost: 1000 points</p><button onclick="openRewardPopup(1000)">Claim</button></div>
     </div>
   </div>
   <div class="section">
