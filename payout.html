@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Payout Info - AnimeGold</title>
+  <style>
+    body { background:#111; color:#fff; text-align:center; font-family:Arial; }
+    .section { margin:20px; padding:20px; border-radius:10px; background:#222; }
+    input, select { margin:10px; padding:8px; border-radius:5px; }
+    button { margin:10px; padding:10px 20px; background:#ff9800; border:none; border-radius:5px; cursor:pointer; }
+    .admin-btn { padding:10px 20px; background:#c0392b; color:white; font-weight:bold; border-radius:5px; text-decoration:none; }
+  </style>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyB6qQybRVw4nlwGA-Kp8d6kCqOhdqo11Aw",
+      authDomain: "animegold-bf2a7.firebaseapp.com",
+      projectId: "animegold-bf2a7",
+      storageBucket: "animegold-bf2a7.firebasestorage.app",
+      messagingSenderId: "1055086176557",
+      appId: "1:1055086176557:web:aca8f68412e95ef369cba4",
+      measurementId: "G-J9LX9WMPJK"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    let userRef, userData = {};
+
+    onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        userRef = doc(db, "users", u.uid);
+        const snap = await getDoc(userRef);
+        if (snap.exists()) {
+          userData = snap.data();
+          showSavedInfo();
+          if (userData.payoutMethod) {
+            document.getElementById("method").value = userData.payoutMethod;
+            document.getElementById("number").value = userData.payoutNumber || "";
+            document.getElementById("payoutName").value = userData.payoutName || "";
+          }
+        }
+        // ✅ Show Admin button only for your Gmail
+        if (u.email === "shadowtrimz@gmail.com") {
+          const adminLink = document.getElementById("adminLink");
+          adminLink.style.display = "inline-block";
+          adminLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            if (confirm("Are you sure you want to enter the Admin Dashboard?")) {
+              window.location.href = "admin.html";
+            }
+          });
+        }
+      } else {
+        window.location.href = "index.html";
+      }
+    });
+
+    window.savePayout = async () => {
+      const method = document.getElementById("method").value;
+      const number = document.getElementById("number").value;
+      const payoutName = document.getElementById("payoutName").value;
+      await setDoc(userRef, {
+        payoutMethod: method,
+        payoutNumber: number,
+        payoutName: payoutName
+      }, { merge: true });
+      alert("Payout info saved!");
+      userData.payoutMethod = method;
+      userData.payoutNumber = number;
+      userData.payoutName = payoutName;
+      showSavedInfo();
+    };
+
+    function showSavedInfo() {
+      document.getElementById("savedInfo").innerText =
+        "Full Name: " + (userData.payoutName || "Not set") + "\n" +
+        "Method: " + (userData.payoutMethod || "Not set") + "\n" +
+        "Number: " + (userData.payoutNumber || "Not set");
+    }
+
+    window.logout = () => signOut(auth).then(() => window.location.href = "index.html");
+  </script>
+</head>
+<body>
+  <div class="section">
+    <h2>Saved Payout Info</h2>
+    <pre id="savedInfo">No info yet</pre>
+  </div>
+  <div class="section">
+    <h2>Update Payout Info</h2>
+    <input id="payoutName" placeholder="Full Name"><br>
+    <select id="method">
+      <option value="GCash">GCash</option>
+      <option value="PayMaya">PayMaya</option>
+    </select><br>
+    <input id="number" placeholder="GCash/PayMaya Number"><br>
+    <button onclick="savePayout()">Save</button>
+  </div>
+  <div class="section">
+    <button onclick="logout()">Logout</button>
+  </div>
+  <!-- 🚀 Admin button -->
+  <div class="section">
+    <a id="adminLink" href="admin.html" class="admin-btn" style="display:none;">🚀 Admin Dashboard</a>
+  </div>
+</body>
+</html>
