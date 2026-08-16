@@ -1,4 +1,5 @@
-// app.js - math game logic (ES module) - EASY/MEDIUM/HARD generators and difficulty-based earnings
+// app.js - math game logic (ES module)
+// Improved: load/save race fixed so earnings persist per account across refreshes
 // Expects auth.js in same folder to export: onAuthChange, getFirestoreDB, signOut
 import { onAuthChange, getFirestoreDB, signOut } from './auth.js';
 import {
@@ -40,6 +41,7 @@ let db = getFirestoreDB();
 let currentUser = null;
 let userRef = null;
 let saveTimer = null;
+let loadedFromServer = false; // prevents saving defaults before load
 
 let state = {
   earnings: 0,
@@ -116,6 +118,8 @@ function updateUI(){
 }
 
 function saveStateDebounced(){
+  // don't autosave until we've loaded state from server to avoid overwriting with defaults on refresh
+  if (!loadedFromServer) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveStateToFirestore, AUTOSAVE_DEBOUNCE);
 }
@@ -135,6 +139,7 @@ async function saveStateToFirestore(){
     updatedAt: serverTimestamp()
   };
   try {
+    // merge:true to avoid clobbering unrelated fields
     await setDoc(userRef, payload, { merge: true });
     showFeedback('Progress saved', 'success', 800);
   } catch (err) {
@@ -146,12 +151,12 @@ async function saveStateToFirestore(){
 function loadDefaultsFromServer(docData){
   if (!docData || !docData.gameState) return;
   const g = docData.gameState;
-  state.earnings = g.earnings || 0;
-  state.coins = g.coins || 0;
-  state.correct = g.correct || 0;
-  state.total = g.total || 0;
-  state.streak = g.streak || 0;
-  state.difficulty = g.difficulty || 1;
+  state.earnings = typeof g.earnings === 'number' ? g.earnings : 0;
+  state.coins = typeof g.coins === 'number' ? g.coins : 0;
+  state.correct = typeof g.correct === 'number' ? g.correct : 0;
+  state.total = typeof g.total === 'number' ? g.total : 0;
+  state.streak = typeof g.streak === 'number' ? g.streak : 0;
+  state.difficulty = typeof g.difficulty === 'number' ? g.difficulty : 1;
   state.current = g.current || null;
 }
 
@@ -210,7 +215,8 @@ el.reset.addEventListener('click', async ()=> {
   if (!confirm('Reset earnings, coins, and progress?')) return;
   state = { earnings:0, coins:0, correct:0, total:0, streak:0, current:null, difficulty: state.difficulty || 1 };
   updateUI();
-  await saveStateToFirestore();
+  // persist reset immediately
+  if (loadedFromServer) await saveStateToFirestore();
   nextProblem();
 });
 el.difficulty.addEventListener('change', (e)=> { state.difficulty = Number(e.target.value); saveStateDebounced(); nextProblem(); });
@@ -225,18 +231,30 @@ onAuthChange(async (user) => {
   }
   currentUser = user;
   userRef = doc(db, 'users', user.uid);
-  // load existing user doc
+
   try {
     const snap = await getDoc(userRef);
-    if (snap.exists()) {
-      loadDefaultsFromServer(snap.data());
+    const data = snap.exists() ? snap.data() : null;
+
+    if (data && data.gameState) {
+      // load server state and enable autosave only after load
+      loadDefaultsFromServer(data);
+      loadedFromServer = true;
     } else {
-      // create initial user doc with gameState
+      // initialize gameState but don't clobber existing unrelated fields
       await setDoc(userRef, { gameState: state, createdAt: serverTimestamp() }, { merge: true });
+      // we have persisted initial state; mark loaded so autosave can run
+      loadedFromServer = true;
     }
   } catch (err) {
-    console.error('Error reading user doc', err);
+    console.error('Error reading or initializing user doc', err);
+    // if error, still allow play but don't autosave to avoid overwriting
+    loadedFromServer = false;
   }
+
+  // Ensure difficulty select reflects loaded state
+  if (el.difficulty) el.difficulty.value = String(state.difficulty || 1);
+
   // if no current problem, generate one
   if (!state.current) nextProblem(); else updateUI();
 });
