@@ -1,12 +1,21 @@
-// app.js - math game logic (ES module) - EASY mode generator
+// app.js - math game logic (ES module) - EASY/MEDIUM/HARD generators and difficulty-based earnings
 // Expects auth.js in same folder to export: onAuthChange, getFirestoreDB, signOut
 import { onAuthChange, getFirestoreDB, signOut } from './auth.js';
 import {
   doc, getDoc, setDoc, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js';
 
-// Game config
-const EARN_PER_CORRECT = 0.10;
+// Earnings configuration per difficulty (1=Easy, 2=Medium, 3=Hard)
+const EARN_BY_DIFFICULTY = {
+  1: 0.05, // Easy
+  2: 0.10, // Medium
+  3: 0.25  // Hard
+};
+const COINS_BY_DIFFICULTY = {
+  1: 1,
+  2: 2,
+  3: 5
+};
 const STREAK_BONUS_STEP = 5;
 const STREAK_BONUS_MULTIPLIER = 2;
 const AUTOSAVE_DEBOUNCE = 900; // ms
@@ -44,39 +53,52 @@ let state = {
 
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 
-// EASY problem generator: small numbers for addition, subtraction, small multiplication, integer division
-function generateProblem(difficultyLevel) {
-  // For now difficultyLevel is ignored and we always produce easy problems.
+// Easy generator (small numbers)
+function generateEasyProblem() {
   const ops = ['+', '-', '×', '÷'];
   const op = ops[randInt(0, ops.length - 1)];
   let a, b, answer;
-
   switch (op) {
-    case '+':
-      a = randInt(1, 10);
-      b = randInt(1, 10);
-      answer = a + b;
-      break;
-    case '-':
-      a = randInt(0, 10);
-      b = randInt(0, 10);
-      if (b > a) [a, b] = [b, a]; // keep non-negative
-      answer = a - b;
-      break;
-    case '×':
-      a = randInt(1, 5);
-      b = randInt(1, 5);
-      answer = a * b;
-      break;
-    case '÷':
-      b = randInt(1, 5);
-      const q = randInt(1, 5);
-      a = b * q; // ensures integer quotient
-      answer = q;
-      break;
+    case '+': a = randInt(1,10); b = randInt(1,10); answer = a + b; break;
+    case '-': a = randInt(0,10); b = randInt(0,10); if (b>a) [a,b]=[b,a]; answer = a - b; break;
+    case '×': a = randInt(1,5); b = randInt(1,5); answer = a * b; break;
+    case '÷': b = randInt(1,5); const q = randInt(1,5); a = b * q; answer = q; break;
   }
+  return {a,b,op,answer};
+}
 
-  return { a, b, op, answer };
+// Medium generator (larger numbers)
+function generateMediumProblem() {
+  const ops = ['+', '-', '×', '÷'];
+  const op = ops[randInt(0, ops.length - 1)];
+  let a, b, answer;
+  switch (op) {
+    case '+': a = randInt(10,50); b = randInt(5,50); answer = a + b; break;
+    case '-': a = randInt(0,60); b = randInt(0,40); if (b>a) [a,b]=[b,a]; answer = a - b; break;
+    case '×': a = randInt(2,12); b = randInt(2,12); answer = a * b; break;
+    case '÷': b = randInt(2,12); const q = randInt(2,12); a = b * q; answer = q; break;
+  }
+  return {a,b,op,answer};
+}
+
+// Hard generator (larger numbers and wider ranges)
+function generateHardProblem() {
+  const ops = ['+', '-', '×', '÷'];
+  const op = ops[randInt(0, ops.length - 1)];
+  let a, b, answer;
+  switch (op) {
+    case '+': a = randInt(50,200); b = randInt(20,200); answer = a + b; break;
+    case '-': a = randInt(0,250); b = randInt(0,200); if (b>a) [a,b]=[b,a]; answer = a - b; break;
+    case '×': a = randInt(5,20); b = randInt(5,20); answer = a * b; break;
+    case '÷': b = randInt(3,20); const q = randInt(2,20); a = b * q; answer = q; break;
+  }
+  return {a,b,op,answer};
+}
+
+function generateProblem(difficultyLevel) {
+  if (difficultyLevel === 1) return generateEasyProblem();
+  if (difficultyLevel === 2) return generateMediumProblem();
+  return generateHardProblem();
 }
 
 function updateUI(){
@@ -150,7 +172,10 @@ function showFeedback(msg, cls, timeout=900){
 
 function applyCorrect(){
   state.correct++; state.total++; state.streak++;
-  let earn = EARN_PER_CORRECT; let coinGain = 1;
+  const baseEarn = EARN_BY_DIFFICULTY[state.difficulty] || 0.1;
+  const baseCoins = COINS_BY_DIFFICULTY[state.difficulty] || 1;
+  let earn = baseEarn;
+  let coinGain = baseCoins;
   if (state.streak > 0 && state.streak % STREAK_BONUS_STEP === 0){
     earn *= STREAK_BONUS_MULTIPLIER;
     coinGain *= STREAK_BONUS_MULTIPLIER;
