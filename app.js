@@ -235,6 +235,7 @@ async function awardEarningsAtomic(amount, coins, reason = 'correct_answer'){
   return result;
 }
 
+// updated applyCorrect returns the promise so callers can await it
 function applyCorrect(){
   // compute base amounts locally, then perform atomic award
   const baseEarn = EARN_BY_DIFFICULTY[state.difficulty] || 0.1;
@@ -247,8 +248,8 @@ function applyCorrect(){
     coinGain *= STREAK_BONUS_MULTIPLIER;
   }
 
-  // perform atomic award
-  awardEarningsAtomic(earn, coinGain, 'correct_answer')
+  // return the promise so caller can await
+  return awardEarningsAtomic(earn, coinGain, 'correct_answer')
     .then((res) => {
       // update local state to match server authoritative values
       state.earnings = res.earnings;
@@ -256,18 +257,21 @@ function applyCorrect(){
       state.correct = res.correct;
       state.total = res.total;
       state.streak = res.streak;
-      showFeedback(`Correct! +$${earn.toFixed(2)}, +${coinGain} coin${coinGain>1?'s':''}`,'success',900);
+      showFeedback(`Correct! +$${earn.toFixed(2)}, +${coinGain} coin${coinGain>1?'s':''}`, 'success', 900);
       updateUI();
+      return res;
     })
     .catch((err) => {
       console.error('Award transaction failed', err);
-      showFeedback('Award failed — offline?','error',1200);
+      showFeedback('Award failed — offline?', 'error', 1200);
       // fall back to local update so player can continue; this will be overwritten when connection restores
       state.correct++; state.total++; state.streak++;
       state.earnings = +(state.earnings + earn).toFixed(2);
       state.coins += coinGain;
       updateUI();
       saveStateDebounced();
+      // rethrow so callers know it failed if they need to
+      throw err;
     });
 }
 
@@ -279,22 +283,38 @@ function applyIncorrect(correctAnswer){
   saveStateDebounced();
 }
 
-function submitAnswer(){
+// make submitAnswer async and await applyCorrect so the award transaction can complete
+async function submitAnswer(){
   const raw = (el.answer && el.answer.value) ? el.answer.value.trim() : '';
   if (raw === '') { showFeedback('Enter an answer or click Skip','error',900); return; }
   const numeric = Number(raw);
   if (Number.isNaN(numeric)) { showFeedback('Please enter a valid number','error',900); return; }
   const correct = state.current && state.current.answer;
   if (typeof correct === 'undefined') { showFeedback('No active problem — generating one','error',900); nextProblem(); return; }
-  if (Math.abs(numeric - correct) < 1e-9) applyCorrect(); else applyIncorrect(correct);
-  // UI update will be driven by applyCorrect/applyIncorrect when transaction completes
+  if (Math.abs(numeric - correct) < 1e-9) {
+    try {
+      await applyCorrect();
+    } catch (e) {
+      // award failed but applyCorrect already handled fallback UI and local state
+      console.warn('applyCorrect completed with error', e);
+    }
+  } else {
+    applyIncorrect(correct);
+  }
+  // advance to next problem after a short delay so the user sees the feedback
   setTimeout(nextProblem, 800);
 }
 
 // Event wiring
 if (el.submit) el.submit.addEventListener('click', submitAnswer);
 if (el.answer) el.answer.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') submitAnswer(); });
-if (el.skip) el.skip.addEventListener('click', ()=>{ state.total++; state.streak=0; showFeedback(`Skipped — correct was ${state.current?state.current.answer:'unknown'}`,'',700); saveStateDebounced(); setTimeout(nextProblem,700); });
+if (el.skip) el.skip.addEventListener('click', ()=>{
+  state.total++;
+  state.streak = 0;
+  showFeedback(`Skipped — correct was ${state.current?state.current.answer:'unknown'}`,'',700);
+  saveStateDebounced();
+  setTimeout(nextProblem, 400);
+});
 if (el.reset) {
   // keep existing handler but make it inert if button removed from UI
   el.reset.addEventListener('click', async ()=> {
