@@ -17,8 +17,8 @@
     /* Spin the Wheel Styles */
     .wheel-container { position:relative; width:300px; height:300px; margin:20px auto; }
     .wheel { width:100%; height:100%; border-radius:50%; position:relative; overflow:hidden; box-shadow:0 0 20px rgba(255, 152, 0, 0.5); }
-    .wheel-segment { position:absolute; width:100%; height:100%; clip-path:polygon(50% 50%, 50% 0%, 100% 0%); transform-origin:50% 50%; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:12px; color:#fff; }
-    .pointer { position:absolute; top:-15px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:15px solid transparent; border-right:15px solid transparent; border-top:20px solid #ff9800; z-index:10; }
+    .wheel-segment { position:absolute; width:100%; height:100%; clip-path:polygon(50% 50%, 50% 0%, 100% 0%); transform-origin:50% 50%; display:flex; align-items:center; justify-content:center; fo[...]
+    .pointer { position:absolute; top:-15px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:15px solid transparent; border-right:15px solid transparent; border-top:20px solid[...]
     .spin-button { background:#27ae60; border:none; padding:12px 30px; border-radius:5px; cursor:pointer; font-size:16px; font-weight:bold; color:#fff; margin:10px; }
     .spin-button:disabled { background:#95a5a6; cursor:not-allowed; }
     .spin-result { background:#333; padding:15px; border-radius:8px; margin:20px auto; width:fit-content; font-size:18px; font-weight:bold; }
@@ -33,14 +33,15 @@
     import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
 
+    // For Firebase JS SDK v7.20.0 and later, measurementId is optional
     const firebaseConfig = {
-      apiKey: "AIzaSyB6qQybRVw4nlwGA-Kp8d6kCqOhdqo11Aw",
-      authDomain: "animegold-bf2a7.firebaseapp.com",
-      projectId: "animegold-bf2a7",
-      storageBucket: "animegold-bf2a7.firebasestorage.app",
-      messagingSenderId: "1055086176557",
-      appId: "1:1055086176557:web:aca8f68412e95ef369cba4",
-      measurementId: "G-J9LX9WMPJK"
+      apiKey: "AIzaSyB9DAebWlYOgHl3DCrpYZIGTFllHQV4RLw",
+      authDomain: "project-918813329806902976.firebaseapp.com",
+      projectId: "project-918813329806902976",
+      storageBucket: "project-918813329806902976.firebasestorage.app",
+      messagingSenderId: "479861099783",
+      appId: "1:479861099783:web:b799ff88142169759009a2",
+      measurementId: "G-THJG5GLQQP"
     };
 
     const app = initializeApp(firebaseConfig);
