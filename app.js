@@ -1,9 +1,9 @@
 // app.js - math game logic (ES module)
-// Improved: load/save race fixed so earnings persist per account across refreshes
+// Now uses atomic Firestore transactions for awarding earnings to prevent loss on refresh.
 // Expects auth.js in same folder to export: onAuthChange, getFirestoreDB, signOut
 import { onAuthChange, getFirestoreDB, signOut } from './auth.js';
 import {
-  doc, getDoc, setDoc, serverTimestamp
+  doc, getDoc, setDoc, serverTimestamp, runTransaction, collection
 } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js';
 
 // Earnings configuration per difficulty (1=Easy, 2=Medium, 3=Hard)
@@ -49,7 +49,7 @@ let state = {
   correct: 0,
   total: 0,
   streak: 0,
-  current: null,
+  current: null, // still kept client-side but NOT persisted to Firestore anymore
   difficulty: 1 // default to Easy
 };
 
@@ -103,25 +103,28 @@ function generateProblem(difficultyLevel) {
   return generateHardProblem();
 }
 
-// Validate a problem object loaded from server or memory
+// Validate a problem object
 function isValidProblem(p) {
   return p && typeof p.a === 'number' && typeof p.b === 'number' && (typeof p.answer !== 'undefined') && typeof p.op === 'string';
 }
 
 function updateUI(){
-  el.earnings.textContent = state.earnings.toFixed(2);
-  el.coins.textContent = state.coins;
-  el.streak.textContent = state.streak;
+  if (el.earnings) el.earnings.textContent = state.earnings.toFixed(2);
+  if (el.coins) el.coins.textContent = state.coins;
+  if (el.streak) el.streak.textContent = state.streak;
   const acc = state.total === 0 ? 0 : Math.round((state.correct/state.total)*100);
-  el.accuracy.textContent = acc + '%';
+  if (el.accuracy) el.accuracy.textContent = acc + '%';
+
   if (!isValidProblem(state.current)) {
     // If invalid, generate a new one and return (nextProblem updates UI and saves)
     console.info('State.current invalid or missing — generating a new problem');
     nextProblem();
     return;
   }
-  const {a,b,op} = state.current;
-  el.problem.textContent = `${a} ${op} ${b} = ?`;
+  if (el.problem) {
+    const {a,b,op} = state.current;
+    el.problem.textContent = `${a} ${op} ${b} = ?`;
+  }
 }
 
 function saveStateDebounced(){
@@ -131,6 +134,7 @@ function saveStateDebounced(){
   saveTimer = setTimeout(saveStateToFirestore, AUTOSAVE_DEBOUNCE);
 }
 
+// Persist only aggregated state (do NOT persist state.current)
 async function saveStateToFirestore(){
   if (!currentUser || !userRef) return;
   const payload = {
@@ -140,13 +144,12 @@ async function saveStateToFirestore(){
       correct: state.correct,
       total: state.total,
       streak: state.streak,
-      difficulty: state.difficulty,
-      current: state.current
+      difficulty: state.difficulty
     },
     updatedAt: serverTimestamp()
   };
   try {
-    // merge:true to avoid clobbering unrelated fields
+    console.info('Saving gameState to server', payload.gameState);
     await setDoc(userRef, payload, { merge: true });
     showFeedback('Progress saved', 'success', 800);
   } catch (err) {
@@ -164,7 +167,8 @@ function loadDefaultsFromServer(docData){
   state.total = typeof g.total === 'number' ? g.total : 0;
   state.streak = typeof g.streak === 'number' ? g.streak : 0;
   state.difficulty = typeof g.difficulty === 'number' ? g.difficulty : 1;
-  state.current = g.current || null;
+  // Do NOT load persisted 'current' into client state - treat current as ephemeral client-only
+  state.current = null;
 }
 
 function nextProblem(){
@@ -183,24 +187,96 @@ function showFeedback(msg, cls, timeout=900){
   if (timeout) setTimeout(()=>{ el.feedback.textContent = ''; el.feedback.className = 'feedback'; }, timeout);
 }
 
+// Award earnings atomically using a Firestore transaction and log an event
+async function awardEarningsAtomic(amount, coins, reason = 'correct_answer'){
+  if (!currentUser || !userRef) throw new Error('Not signed in');
+  console.info('Awarding (atomic)', { amount, coins, reason });
+  const result = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(userRef);
+    const gs = (snap.exists() && snap.data().gameState) ? snap.data().gameState : {};
+    const currentE = typeof gs.earnings === 'number' ? gs.earnings : 0;
+    const currentCoins = typeof gs.coins === 'number' ? gs.coins : 0;
+    const currentCorrect = typeof gs.correct === 'number' ? gs.correct : 0;
+    const currentTotal = typeof gs.total === 'number' ? gs.total : 0;
+    const currentStreak = typeof gs.streak === 'number' ? gs.streak : 0;
+
+    const newCorrect = currentCorrect + 1;
+    const newTotal = currentTotal + 1;
+    const newStreak = currentStreak + 1;
+    const newEarnings = +(currentE + amount).toFixed(2);
+    const newCoins = currentCoins + coins;
+
+    // update user's aggregated gameState (do not include current problem)
+    tx.set(userRef, {
+      gameState: {
+        earnings: newEarnings,
+        coins: newCoins,
+        correct: newCorrect,
+        total: newTotal,
+        streak: newStreak,
+        difficulty: gs.difficulty || state.difficulty
+      }
+    }, { merge: true });
+
+    // log an earnings event for audit
+    const eventRef = doc(collection(db, 'earningsEvents'));
+    tx.set(eventRef, {
+      uid: currentUser.uid,
+      amount,
+      coins,
+      reason,
+      createdAt: serverTimestamp()
+    });
+
+    return { earnings: newEarnings, coins: newCoins, correct: newCorrect, total: newTotal, streak: newStreak };
+  });
+
+  console.info('Award transaction completed', result);
+  return result;
+}
+
 function applyCorrect(){
-  state.correct++; state.total++; state.streak++;
+  // compute base amounts locally, then perform atomic award
   const baseEarn = EARN_BY_DIFFICULTY[state.difficulty] || 0.1;
   const baseCoins = COINS_BY_DIFFICULTY[state.difficulty] || 1;
   let earn = baseEarn;
   let coinGain = baseCoins;
-  if (state.streak > 0 && state.streak % STREAK_BONUS_STEP === 0){
+  const nextStreak = state.streak + 1;
+  if (nextStreak > 0 && nextStreak % STREAK_BONUS_STEP === 0){
     earn *= STREAK_BONUS_MULTIPLIER;
     coinGain *= STREAK_BONUS_MULTIPLIER;
   }
-  state.earnings = +(state.earnings + earn).toFixed(2);
-  state.coins += coinGain;
-  showFeedback(`Correct! +$${earn.toFixed(2)}, +${coinGain} coin${coinGain>1?'s':''}`,'success',900);
+
+  // perform atomic award
+  awardEarningsAtomic(earn, coinGain, 'correct_answer')
+    .then((res) => {
+      // update local state to match server authoritative values
+      state.earnings = res.earnings;
+      state.coins = res.coins;
+      state.correct = res.correct;
+      state.total = res.total;
+      state.streak = res.streak;
+      showFeedback(`Correct! +$${earn.toFixed(2)}, +${coinGain} coin${coinGain>1?'s':''}`,'success',900);
+      updateUI();
+    })
+    .catch((err) => {
+      console.error('Award transaction failed', err);
+      showFeedback('Award failed — offline?','error',1200);
+      // fall back to local update so player can continue; this will be overwritten when connection restores
+      state.correct++; state.total++; state.streak++;
+      state.earnings = +(state.earnings + earn).toFixed(2);
+      state.coins += coinGain;
+      updateUI();
+      saveStateDebounced();
+    });
 }
 
 function applyIncorrect(correctAnswer){
-  state.total++; state.streak = 0;
+  state.total++;
+  state.streak = 0;
   showFeedback(`Wrong — correct: ${correctAnswer}`,'error',900);
+  // persist aggregated counters
+  saveStateDebounced();
 }
 
 function submitAnswer(){
@@ -211,8 +287,7 @@ function submitAnswer(){
   const correct = state.current && state.current.answer;
   if (typeof correct === 'undefined') { showFeedback('No active problem — generating one','error',900); nextProblem(); return; }
   if (Math.abs(numeric - correct) < 1e-9) applyCorrect(); else applyIncorrect(correct);
-  updateUI();
-  saveStateDebounced();
+  // UI update will be driven by applyCorrect/applyIncorrect when transaction completes
   setTimeout(nextProblem, 800);
 }
 
@@ -221,12 +296,17 @@ if (el.submit) el.submit.addEventListener('click', submitAnswer);
 if (el.answer) el.answer.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') submitAnswer(); });
 if (el.skip) el.skip.addEventListener('click', ()=>{ state.total++; state.streak=0; showFeedback(`Skipped — correct was ${state.current?state.current.answer:'unknown'}`,'',700); saveStateDebounced(); setTimeout(nextProblem,700); });
 if (el.reset) {
+  // keep existing handler but make it inert if button removed from UI
   el.reset.addEventListener('click', async ()=> {
     if (!confirm('Reset earnings, coins, and progress?')) return;
     state = { earnings:0, coins:0, correct:0, total:0, streak:0, current:null, difficulty: state.difficulty || 1 };
     updateUI();
-    // persist reset immediately
-    if (loadedFromServer) await saveStateToFirestore();
+    // persist reset immediately if we loaded from server
+    if (loadedFromServer) {
+      try {
+        await setDoc(userRef, { gameState: { earnings:0, coins:0, correct:0, total:0, streak:0, difficulty: state.difficulty } }, { merge: true });
+      } catch (e) { console.error('Failed to persist reset', e); }
+    }
     nextProblem();
   });
 }
@@ -249,12 +329,14 @@ onAuthChange(async (user) => {
 
     if (data && data.gameState) {
       // load server state and enable autosave only after load
+      console.info('Loaded gameState from server', data.gameState);
       loadDefaultsFromServer(data);
       loadedFromServer = true;
     } else {
-      // initialize gameState but don't clobber existing unrelated fields
-      await setDoc(userRef, { gameState: state, createdAt: serverTimestamp() }, { merge: true });
-      // we have persisted initial state; mark loaded so autosave can run
+      // initialize gameState but do not persist state.current
+      const initial = { earnings: state.earnings, coins: state.coins, correct: state.correct, total: state.total, streak: state.streak, difficulty: state.difficulty };
+      await setDoc(userRef, { gameState: initial, createdAt: serverTimestamp() }, { merge: true });
+      console.info('Initialized new user gameState', initial);
       loadedFromServer = true;
     }
   } catch (err) {
