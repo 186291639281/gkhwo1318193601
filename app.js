@@ -21,6 +21,9 @@ const STREAK_BONUS_STEP = 5;
 const STREAK_BONUS_MULTIPLIER = 2;
 const AUTOSAVE_DEBOUNCE = 900; // ms
 
+// localStorage key for pending awards queue
+const PENDING_KEY = 'pendingAwards_v1';
+
 // Elements
 const el = {
   earnings: document.getElementById('earnings'),
@@ -42,6 +45,7 @@ let currentUser = null;
 let userRef = null;
 let saveTimer = null;
 let loadedFromServer = false; // prevents saving defaults before load
+let flushingPending = false; // guard for flush
 
 let state = {
   earnings: 0,
@@ -54,6 +58,29 @@ let state = {
 };
 
 function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+function genClientId() {
+  // simple unique id using timestamp + random
+  return 'evt_' + Date.now().toString(36) + '_' + Math.floor(Math.random()*1e8).toString(36);
+}
+
+function loadPendingAwards(){
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (e) { console.warn('Failed to parse pending awards', e); return []; }
+}
+
+function savePendingAwards(queue){
+  try { localStorage.setItem(PENDING_KEY, JSON.stringify(queue)); } catch(e){ console.error('Failed to save pending awards', e); }
+}
+
+function enqueuePendingAward(item){
+  const q = loadPendingAwards();
+  q.push(item);
+  savePendingAwards(q);
+}
 
 // Easy generator (small numbers)
 function generateEasyProblem() {
@@ -188,10 +215,31 @@ function showFeedback(msg, cls, timeout=900){
 }
 
 // Award earnings atomically using a Firestore transaction and log an event
-async function awardEarningsAtomic(amount, coins, reason = 'correct_answer'){
+// Supports an optional clientEventId for idempotency (useful when retrying failed awards)
+async function awardEarningsAtomic(amount, coins, reason = 'correct_answer', clientEventId = null){
   if (!currentUser || !userRef) throw new Error('Not signed in');
-  console.info('Awarding (atomic)', { amount, coins, reason });
+  console.info('Awarding (atomic)', { amount, coins, reason, clientEventId });
   const result = await runTransaction(db, async (tx) => {
+    // Use event doc with provided clientEventId if available for idempotency
+    const eventRef = clientEventId ? doc(db, 'earningsEvents', clientEventId) : doc(collection(db, 'earningsEvents'));
+
+    // If clientEventId provided, check if event already exists — if so, avoid double-award
+    if (clientEventId) {
+      const evSnap = await tx.get(eventRef);
+      if (evSnap.exists()){
+        // Return current server gameState to caller
+        const snap = await tx.get(userRef);
+        const gs = (snap.exists() && snap.data().gameState) ? snap.data().gameState : {};
+        return {
+          earnings: typeof gs.earnings === 'number' ? gs.earnings : 0,
+          coins: typeof gs.coins === 'number' ? gs.coins : 0,
+          correct: typeof gs.correct === 'number' ? gs.correct : 0,
+          total: typeof gs.total === 'number' ? gs.total : 0,
+          streak: typeof gs.streak === 'number' ? gs.streak : 0
+        };
+      }
+    }
+
     const snap = await tx.get(userRef);
     const gs = (snap.exists() && snap.data().gameState) ? snap.data().gameState : {};
     const currentE = typeof gs.earnings === 'number' ? gs.earnings : 0;
@@ -218,15 +266,25 @@ async function awardEarningsAtomic(amount, coins, reason = 'correct_answer'){
       }
     }, { merge: true });
 
-    // log an earnings event for audit
-    const eventRef = doc(collection(db, 'earningsEvents'));
-    tx.set(eventRef, {
-      uid: currentUser.uid,
-      amount,
-      coins,
-      reason,
-      createdAt: serverTimestamp()
-    });
+    // log an earnings event for audit; use deterministic id if provided
+    if (clientEventId) {
+      tx.set(eventRef, {
+        uid: currentUser.uid,
+        amount,
+        coins,
+        reason,
+        createdAt: serverTimestamp()
+      });
+    } else {
+      const eventRefAuto = doc(collection(db, 'earningsEvents'));
+      tx.set(eventRefAuto, {
+        uid: currentUser.uid,
+        amount,
+        coins,
+        reason,
+        createdAt: serverTimestamp()
+      });
+    }
 
     return { earnings: newEarnings, coins: newCoins, correct: newCorrect, total: newTotal, streak: newStreak };
   });
@@ -235,7 +293,15 @@ async function awardEarningsAtomic(amount, coins, reason = 'correct_answer'){
   return result;
 }
 
-// updated applyCorrect returns the promise so callers can await it
+function applyIncorrect(correctAnswer){
+  state.total++;
+  state.streak = 0;
+  showFeedback(`Wrong — correct: ${correctAnswer}`,'error',900);
+  // persist aggregated counters
+  saveStateDebounced();
+}
+
+// updated applyCorrect returns the promise so callers can await it and supports enqueue on failure
 function applyCorrect(){
   // compute base amounts locally, then perform atomic award
   const baseEarn = EARN_BY_DIFFICULTY[state.difficulty] || 0.1;
@@ -248,8 +314,10 @@ function applyCorrect(){
     coinGain *= STREAK_BONUS_MULTIPLIER;
   }
 
+  const clientEventId = genClientId();
+
   // return the promise so caller can await
-  return awardEarningsAtomic(earn, coinGain, 'correct_answer')
+  return awardEarningsAtomic(earn, coinGain, 'correct_answer', clientEventId)
     .then((res) => {
       // update local state to match server authoritative values
       state.earnings = res.earnings;
@@ -263,24 +331,59 @@ function applyCorrect(){
     })
     .catch((err) => {
       console.error('Award transaction failed', err);
-      showFeedback('Award failed — offline?', 'error', 1200);
-      // fall back to local update so player can continue; this will be overwritten when connection restores
+      // If offline or transient, enqueue the award for later retry
+      const pending = {
+        id: clientEventId,
+        uid: currentUser ? currentUser.uid : null,
+        amount: earn,
+        coins: coinGain,
+        reason: 'correct_answer',
+        createdAt: Date.now()
+      };
+      enqueuePendingAward(pending);
+      showFeedback('Award queued — will sync when online', 'success', 2000);
+      // update local state immediately so user sees progress; server will be authoritative later
       state.correct++; state.total++; state.streak++;
       state.earnings = +(state.earnings + earn).toFixed(2);
       state.coins += coinGain;
       updateUI();
-      saveStateDebounced();
-      // rethrow so callers know it failed if they need to
-      throw err;
+      // still resolve so caller flow continues
+      return pending;
     });
 }
 
-function applyIncorrect(correctAnswer){
-  state.total++;
-  state.streak = 0;
-  showFeedback(`Wrong — correct: ${correctAnswer}`,'error',900);
-  // persist aggregated counters
-  saveStateDebounced();
+// flush pending awards from localStorage when online and authenticated
+async function flushPendingAwards(){
+  if (!currentUser || !userRef) return;
+  if (flushingPending) return;
+  const q = loadPendingAwards();
+  if (!q || q.length === 0) return;
+  if (!navigator.onLine) return;
+  flushingPending = true;
+  showFeedback('Syncing queued awards...', 'success', 1200);
+  let remaining = q.slice();
+  for (let i = 0; i < q.length; i++){
+    const item = q[i];
+    try {
+      // attempt to apply award idempotently using stored client id
+      const res = await awardEarningsAtomic(item.amount, item.coins, item.reason, item.id);
+      // on success remove from remaining
+      remaining = remaining.filter(x => x.id !== item.id);
+      // update local authoritative state to match server
+      state.earnings = res.earnings; state.coins = res.coins; state.correct = res.correct; state.total = res.total; state.streak = res.streak;
+      updateUI();
+    } catch (err) {
+      console.warn('Failed to flush pending award', item.id, err);
+      // if network error, stop flushing and try later
+      if (!navigator.onLine) break;
+      // if auth lost, stop
+      if (!currentUser) break;
+      // otherwise continue with next (could be transient Firestore error)
+    }
+  }
+  // persist remaining queue
+  savePendingAwards(remaining);
+  flushingPending = false;
 }
 
 // make submitAnswer async and await applyCorrect so the award transaction can complete
@@ -295,7 +398,7 @@ async function submitAnswer(){
     try {
       await applyCorrect();
     } catch (e) {
-      // award failed but applyCorrect already handled fallback UI and local state
+      // applyCorrect handles enqueue and local fallback
       console.warn('applyCorrect completed with error', e);
     }
   } else {
@@ -332,6 +435,9 @@ if (el.reset) {
 }
 if (el.difficulty) el.difficulty.addEventListener('change', (e)=> { state.difficulty = Number(e.target.value); saveStateDebounced(); nextProblem(); });
 if (el.signout) el.signout.addEventListener('click', async ()=> { await signOut(); window.location.href = 'index.html'; });
+
+// try to flush when connection returns
+window.addEventListener('online', () => { flushPendingAwards().catch(e=>console.warn('Flush error', e)); });
 
 // Auth gating and initial load
 onAuthChange(async (user) => {
@@ -374,5 +480,10 @@ onAuthChange(async (user) => {
     nextProblem();
   } else {
     updateUI();
+  }
+
+  // Once signed in and loaded, attempt to flush any queued awards
+  if (loadedFromServer) {
+    flushPendingAwards().catch(e=>console.warn('Initial flush failed', e));
   }
 });
